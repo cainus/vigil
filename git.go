@@ -22,20 +22,31 @@ func IsGitRepo() bool {
 func GetCurrentBranch() string {
 	cmd := exec.Command("git", "branch", "--show-current")
 	output, err := cmd.Output()
-	if err != nil {
-		// Might be in detached HEAD state
-		cmd = exec.Command("git", "rev-parse", "--short", "HEAD")
-		output, err = cmd.Output()
-		if err != nil {
-			return "unknown"
+	if err == nil {
+		branch := strings.TrimSpace(string(output))
+		if branch != "" {
+			return branch
 		}
+	}
+
+	// Try symbolic-ref for repos with no commits yet
+	cmd = exec.Command("git", "symbolic-ref", "--short", "HEAD")
+	output, err = cmd.Output()
+	if err == nil {
+		branch := strings.TrimSpace(string(output))
+		if branch != "" {
+			return branch + " (no commits)"
+		}
+	}
+
+	// Might be in detached HEAD state
+	cmd = exec.Command("git", "rev-parse", "--short", "HEAD")
+	output, err = cmd.Output()
+	if err == nil {
 		return "(detached) " + strings.TrimSpace(string(output))
 	}
-	branch := strings.TrimSpace(string(output))
-	if branch == "" {
-		return "unknown"
-	}
-	return branch
+
+	return "unknown"
 }
 
 // GetGitStatus returns a list of changed files from git status

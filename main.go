@@ -10,13 +10,19 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+const asciiArt = `
+ █░█ █ █▀▀ █ █░░
+ ▀▄▀ █ █▄█ █ █▄▄
+`
+
 // Styles
 var (
-	titleStyle = lipgloss.NewStyle().
+	asciiStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("205")).
-			Background(lipgloss.Color("236")).
-			Padding(0, 1)
+			Foreground(lipgloss.Color("205"))
+
+	pathStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("245"))
 
 	branchStyle = lipgloss.NewStyle().
 			Bold(true).
@@ -55,6 +61,7 @@ type tickMsg struct{}
 
 // Model
 type model struct {
+	dir      string
 	branch   string
 	changes  []FileChange
 	watcher  *Watcher
@@ -106,7 +113,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
-		headerHeight := 4 // Title + branch + spacing
+		headerHeight := 8 // ASCII art + path + branch + spacing
 		footerHeight := 2 // Help text
 		verticalMargin := headerHeight + footerHeight
 
@@ -138,9 +145,12 @@ func (m model) View() string {
 
 	var b strings.Builder
 
-	// Title
-	title := titleStyle.Render(" Vigil ")
-	b.WriteString(title)
+	// ASCII Art Title
+	b.WriteString(asciiStyle.Render(asciiArt))
+	b.WriteString("\n")
+
+	// Directory path
+	b.WriteString(pathStyle.Render(m.dir))
 	b.WriteString("\n\n")
 
 	// Branch
@@ -214,6 +224,7 @@ func main() {
 
 	// Create model with watcher
 	m := initialModel()
+	m.dir = dir
 	m.watcher = watcher
 
 	// Run the program
