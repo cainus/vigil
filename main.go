@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -48,15 +49,9 @@ var (
 
 	helpStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("241"))
-
-	borderStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("62")).
-			Padding(0, 1)
 )
 
 // Messages
-type fileChangeMsg struct{}
 type tickMsg struct{}
 
 // Model
@@ -64,7 +59,6 @@ type model struct {
 	dir      string
 	branch   string
 	changes  []FileChange
-	watcher  *Watcher
 	viewport viewport.Model
 	ready    bool
 	width    int
@@ -78,21 +72,14 @@ func initialModel() model {
 	}
 }
 
-func (m model) Init() tea.Cmd {
-	return tea.Batch(
-		watchForChanges(m.watcher),
-		tea.EnterAltScreen,
-	)
+func tick() tea.Cmd {
+	return tea.Tick(1*time.Second, func(t time.Time) tea.Msg {
+		return tickMsg{}
+	})
 }
 
-func watchForChanges(w *Watcher) tea.Cmd {
-	return func() tea.Msg {
-		if w == nil {
-			return nil
-		}
-		<-w.Events
-		return fileChangeMsg{}
-	}
+func (m model) Init() tea.Cmd {
+	return tea.Batch(tick(), tea.EnterAltScreen)
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -103,9 +90,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c", "esc":
-			if m.watcher != nil {
-				m.watcher.Close()
-			}
 			return m, tea.Quit
 		}
 
@@ -126,10 +110,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.Height = msg.Height - verticalMargin
 		}
 
-	case fileChangeMsg:
+	case tickMsg:
 		m.branch = GetCurrentBranch()
 		m.changes = GetGitStatus()
-		cmds = append(cmds, watchForChanges(m.watcher))
+		cmds = append(cmds, tick())
 	}
 
 	m.viewport, cmd = m.viewport.Update(msg)
@@ -214,18 +198,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Create watcher
-	watcher, err := NewWatcher(dir)
-	if err != nil {
-		fmt.Printf("Error creating watcher: %v\n", err)
-		os.Exit(1)
-	}
-	defer watcher.Close()
-
-	// Create model with watcher
+	// Create model
 	m := initialModel()
 	m.dir = dir
-	m.watcher = watcher
 
 	// Run the program
 	p := tea.NewProgram(m, tea.WithAltScreen())
