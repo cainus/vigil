@@ -127,40 +127,35 @@ func (m model) View() string {
 		return "Initializing..."
 	}
 
-	var b strings.Builder
+	// Header (rendered outside viewport)
+	var header strings.Builder
+	header.WriteString(asciiStyle.Render(asciiArt))
+	header.WriteString("\n")
+	header.WriteString(pathStyle.Render(m.dir))
+	header.WriteString("\n\n")
+	header.WriteString("Branch: ")
+	header.WriteString(branchStyle.Render(m.branch))
+	header.WriteString("\n\n")
 
-	// ASCII Art Title
-	b.WriteString(asciiStyle.Render(asciiArt))
-	b.WriteString("\n")
-
-	// Directory path
-	b.WriteString(pathStyle.Render(m.dir))
-	b.WriteString("\n\n")
-
-	// Branch
-	b.WriteString("Branch: ")
-	b.WriteString(branchStyle.Render(m.branch))
-	b.WriteString("\n\n")
-
-	// Changed files
+	// File list (rendered inside viewport for scrolling)
+	var body strings.Builder
 	if len(m.changes) == 0 {
-		b.WriteString(helpStyle.Render("No changes detected"))
+		body.WriteString(helpStyle.Render("No changes detected"))
 	} else {
-		b.WriteString("Changed Files:\n")
+		body.WriteString("Changed Files:\n")
 		for _, change := range m.changes {
 			status := formatStatus(change.Status)
 			file := fileStyle.Render(change.File)
-			b.WriteString(fmt.Sprintf("  %s %s\n", status, file))
+			body.WriteString(fmt.Sprintf("  %s %s\n", status, file))
 		}
 	}
 
-	// Update viewport content
-	m.viewport.SetContent(b.String())
+	m.viewport.SetContent(body.String())
 
 	// Footer
 	footer := helpStyle.Render("\nWatching for changes... Press 'q' to quit")
 
-	return m.viewport.View() + footer
+	return header.String() + m.viewport.View() + footer
 }
 
 func formatStatus(status string) string {
