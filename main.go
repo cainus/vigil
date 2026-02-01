@@ -144,9 +144,9 @@ func (m model) View() string {
 	} else {
 		body.WriteString("Changed Files:\n")
 		for _, change := range m.changes {
-			status := formatStatus(change.Status)
+			label := formatLabel(change)
 			file := fileStyle.Render(change.File)
-			body.WriteString(fmt.Sprintf("  %s %s\n", status, file))
+			body.WriteString(fmt.Sprintf("  %s  %s\n", label, file))
 		}
 	}
 
@@ -158,24 +158,25 @@ func (m model) View() string {
 	return header.String() + m.viewport.View() + footer
 }
 
-func formatStatus(status string) string {
-	// Pad status to 2 characters for alignment
-	padded := fmt.Sprintf("%-2s", status)
+func formatLabel(c FileChange) string {
+	padded := fmt.Sprintf("%-25s", c.Label)
 
-	switch {
-	case strings.Contains(status, "M"):
-		return statusModified.Render(padded)
-	case strings.Contains(status, "A"):
-		return statusAdded.Render(padded)
-	case strings.Contains(status, "D"):
-		return statusDeleted.Render(padded)
-	case strings.Contains(status, "R"):
-		return statusRenamed.Render(padded)
-	case status == "??":
+	if c.Staged == '?' {
 		return statusUntracked.Render(padded)
-	default:
-		return padded
 	}
+	if c.Staged == 'D' || c.Unstaged == 'D' {
+		return statusDeleted.Render(padded)
+	}
+	if c.Staged == 'A' {
+		return statusAdded.Render(padded)
+	}
+	if c.Staged == 'R' {
+		return statusRenamed.Render(padded)
+	}
+	if c.Staged != ' ' && c.Staged != 0 {
+		return statusAdded.Render(padded) // staged changes in green
+	}
+	return statusModified.Render(padded)
 }
 
 func main() {

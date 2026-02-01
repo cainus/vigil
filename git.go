@@ -7,8 +7,10 @@ import (
 
 // FileChange represents a changed file in git status
 type FileChange struct {
-	Status string
-	File   string
+	Staged   byte // first column: staged status
+	Unstaged byte // second column: unstaged status
+	Label    string
+	File     string
 }
 
 // IsGitRepo checks if the current directory is inside a git repository
@@ -60,15 +62,56 @@ func GetGitStatus() []FileChange {
 	var changes []FileChange
 	lines := strings.Split(string(output), "\n")
 	for _, line := range lines {
-		if len(line) < 3 {
+		if len(line) < 4 {
 			continue
 		}
-		status := strings.TrimSpace(line[:2])
+		staged := line[0]
+		unstaged := line[1]
 		file := line[3:]
+
+		label := statusLabel(staged, unstaged)
 		changes = append(changes, FileChange{
-			Status: status,
-			File:   file,
+			Staged:   staged,
+			Unstaged: unstaged,
+			Label:    label,
+			File:     file,
 		})
 	}
 	return changes
+}
+
+func statusLabel(staged, unstaged byte) string {
+	if staged == '?' && unstaged == '?' {
+		return "untracked"
+	}
+	if staged == '!' && unstaged == '!' {
+		return "ignored"
+	}
+
+	parts := []string{}
+
+	switch staged {
+	case 'M':
+		parts = append(parts, "modified (staged)")
+	case 'A':
+		parts = append(parts, "added (staged)")
+	case 'D':
+		parts = append(parts, "deleted (staged)")
+	case 'R':
+		parts = append(parts, "renamed (staged)")
+	case 'C':
+		parts = append(parts, "copied (staged)")
+	}
+
+	switch unstaged {
+	case 'M':
+		parts = append(parts, "modified")
+	case 'D':
+		parts = append(parts, "deleted")
+	}
+
+	if len(parts) == 0 {
+		return "changed"
+	}
+	return strings.Join(parts, ", ")
 }
