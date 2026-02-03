@@ -131,13 +131,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		verticalMargin := headerHeight + footerHeight
 
 		if !m.ready {
-			m.viewport = viewport.New(msg.Width-4, msg.Height-verticalMargin)
-			m.viewport.YPosition = headerHeight
+			m.viewport = viewport.New(msg.Width, msg.Height-verticalMargin)
 			m.viewport.SetContent(m.renderBody())
 			m.ready = true
 		} else {
-			m.viewport.Width = msg.Width - 4
+			m.viewport.Width = msg.Width
 			m.viewport.Height = msg.Height - verticalMargin
+			m.viewport.SetContent(m.renderBody())
 		}
 
 	case tickMsg:
