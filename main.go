@@ -112,6 +112,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c", "esc":
 			return m, tea.Quit
+		case "up", "k":
+			m.viewport.LineUp(1)
+		case "down", "j":
+			m.viewport.LineDown(1)
+		case "pgup":
+			m.viewport.HalfViewUp()
+		case "pgdown":
+			m.viewport.HalfViewDown()
 		}
 
 	case tea.WindowSizeMsg:
@@ -125,6 +133,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.ready {
 			m.viewport = viewport.New(msg.Width-4, msg.Height-verticalMargin)
 			m.viewport.YPosition = headerHeight
+			m.viewport.SetContent(m.renderBody())
 			m.ready = true
 		} else {
 			m.viewport.Width = msg.Width - 4
@@ -135,6 +144,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.branch = GetCurrentBranch()
 		m.changes = GetGitStatus()
 		m.branchFiles = GetBranchDiffFiles()
+		m.viewport.SetContent(m.renderBody())
 		cmds = append(cmds, tick())
 
 	case fetchTickMsg:
@@ -179,41 +189,45 @@ func (m model) View() string {
 	}
 	header.WriteString("\n\n")
 
-	// File list (rendered inside viewport for scrolling)
-	var body strings.Builder
-	if len(m.changes) == 0 {
-		body.WriteString(helpStyle.Render("No changes detected"))
-	} else {
-		body.WriteString("Changed Files:\n")
-		for _, change := range m.changes {
-			label := formatLabel(change)
-			file := fileStyle.Render(change.File)
-			body.WriteString(fmt.Sprintf("  %s  %s\n", label, file))
-		}
-	}
-
-	if len(m.branchFiles) > 0 {
-		body.WriteString("\nBranch Files:\n")
-		for _, bf := range m.branchFiles {
-			label := fmt.Sprintf("%-25s", branchFileLabel(bf.Status))
-			styled := statusModified.Render(label)
-			if bf.Status == "A" {
-				styled = statusAdded.Render(label)
-			} else if bf.Status == "D" {
-				styled = statusDeleted.Render(label)
-			} else if strings.HasPrefix(bf.Status, "R") {
-				styled = statusRenamed.Render(label)
-			}
-			body.WriteString(fmt.Sprintf("  %s  %s\n", styled, fileStyle.Render(bf.File)))
-		}
-	}
-
-	m.viewport.SetContent(body.String())
-
 	// Footer
-	footer := helpStyle.Render("\nWatching for changes... Press 'q' to quit")
+	footer := helpStyle.Render("\nScroll: ↑/↓/j/k  Press 'q' to quit")
 
 	return header.String() + m.viewport.View() + footer
+}
+
+func (m model) renderBody() string {
+	var body strings.Builder
+	if len(m.changes) == 0 && len(m.branchFiles) == 0 {
+		body.WriteString(helpStyle.Render("No changes detected"))
+	} else {
+		if len(m.changes) > 0 {
+			body.WriteString("Changed Files:\n")
+			for _, change := range m.changes {
+				label := formatLabel(change)
+				file := fileStyle.Render(change.File)
+				body.WriteString(fmt.Sprintf("  %s  %s\n", label, file))
+			}
+		}
+		if len(m.branchFiles) > 0 {
+			if len(m.changes) > 0 {
+				body.WriteString("\n")
+			}
+			body.WriteString("Branch Files:\n")
+			for _, bf := range m.branchFiles {
+				label := fmt.Sprintf("%-25s", branchFileLabel(bf.Status))
+				styled := statusModified.Render(label)
+				if bf.Status == "A" {
+					styled = statusAdded.Render(label)
+				} else if bf.Status == "D" {
+					styled = statusDeleted.Render(label)
+				} else if strings.HasPrefix(bf.Status, "R") {
+					styled = statusRenamed.Render(label)
+				}
+				body.WriteString(fmt.Sprintf("  %s  %s\n", styled, fileStyle.Render(bf.File)))
+			}
+		}
+	}
+	return body.String()
 }
 
 func formatLabel(c FileChange) string {
@@ -274,7 +288,7 @@ func main() {
 	m.dir = dir
 
 	// Run the program
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Error running program: %v\n", err)
 		os.Exit(1)
