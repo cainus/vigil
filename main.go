@@ -53,12 +53,21 @@ var (
 
 // Messages
 type tickMsg struct{}
+type fetchTickMsg struct {
+	ahead  int
+	behind int
+	err    error
+}
 
 // Model
 type model struct {
-	dir      string
-	branch   string
-	changes  []FileChange
+	dir         string
+	branch      string
+	changes     []FileChange
+	branchFiles []BranchFile
+	ahead       int
+	behind      int
+	upstreamErr error
 	viewport viewport.Model
 	ready    bool
 	width    int
@@ -67,8 +76,9 @@ type model struct {
 
 func initialModel() model {
 	return model{
-		branch:  GetCurrentBranch(),
-		changes: GetGitStatus(),
+		branch:      GetCurrentBranch(),
+		changes:     GetGitStatus(),
+		branchFiles: GetBranchDiffFiles(),
 	}
 }
 
@@ -78,8 +88,19 @@ func tick() tea.Cmd {
 	})
 }
 
+func fetchUpstream() tea.Msg {
+	ahead, behind, err := GetCommitsAheadBehind()
+	return fetchTickMsg{ahead: ahead, behind: behind, err: err}
+}
+
+func scheduleFetch() tea.Cmd {
+	return tea.Tick(2*time.Minute, func(t time.Time) tea.Msg {
+		return fetchUpstream()
+	})
+}
+
 func (m model) Init() tea.Cmd {
-	return tea.Batch(tick(), tea.EnterAltScreen)
+	return tea.Batch(tick(), tea.EnterAltScreen, fetchUpstream)
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -113,7 +134,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.branch = GetCurrentBranch()
 		m.changes = GetGitStatus()
+		m.branchFiles = GetBranchDiffFiles()
 		cmds = append(cmds, tick())
+
+	case fetchTickMsg:
+		m.ahead = msg.ahead
+		m.behind = msg.behind
+		m.upstreamErr = msg.err
+		cmds = append(cmds, scheduleFetch())
 	}
 
 	m.viewport, cmd = m.viewport.Update(msg)
@@ -135,6 +163,20 @@ func (m model) View() string {
 	header.WriteString("\n\n")
 	header.WriteString("Branch: ")
 	header.WriteString(branchStyle.Render(m.branch))
+	if m.upstreamErr != nil {
+		header.WriteString(helpStyle.Render(" (no upstream)"))
+	} else if m.ahead == 0 && m.behind == 0 {
+		header.WriteString(helpStyle.Render(" (up to date)"))
+	} else {
+		var parts []string
+		if m.behind > 0 {
+			parts = append(parts, fmt.Sprintf("%d behind", m.behind))
+		}
+		if m.ahead > 0 {
+			parts = append(parts, fmt.Sprintf("%d ahead", m.ahead))
+		}
+		header.WriteString(helpStyle.Render(" (" + strings.Join(parts, ", ") + ")"))
+	}
 	header.WriteString("\n\n")
 
 	// File list (rendered inside viewport for scrolling)
@@ -147,6 +189,22 @@ func (m model) View() string {
 			label := formatLabel(change)
 			file := fileStyle.Render(change.File)
 			body.WriteString(fmt.Sprintf("  %s  %s\n", label, file))
+		}
+	}
+
+	if len(m.branchFiles) > 0 {
+		body.WriteString("\nBranch Files:\n")
+		for _, bf := range m.branchFiles {
+			label := fmt.Sprintf("%-25s", branchFileLabel(bf.Status))
+			styled := statusModified.Render(label)
+			if bf.Status == "A" {
+				styled = statusAdded.Render(label)
+			} else if bf.Status == "D" {
+				styled = statusDeleted.Render(label)
+			} else if strings.HasPrefix(bf.Status, "R") {
+				styled = statusRenamed.Render(label)
+			}
+			body.WriteString(fmt.Sprintf("  %s  %s\n", styled, fileStyle.Render(bf.File)))
 		}
 	}
 
@@ -177,6 +235,23 @@ func formatLabel(c FileChange) string {
 		return statusAdded.Render(padded) // staged changes in green
 	}
 	return statusModified.Render(padded)
+}
+
+func branchFileLabel(status string) string {
+	switch {
+	case status == "A":
+		return "added"
+	case status == "D":
+		return "deleted"
+	case status == "M":
+		return "modified"
+	case strings.HasPrefix(status, "R"):
+		return "renamed"
+	case strings.HasPrefix(status, "C"):
+		return "copied"
+	default:
+		return "changed"
+	}
 }
 
 func main() {
