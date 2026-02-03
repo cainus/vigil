@@ -1,0 +1,23 @@
+main.go
+  6320c7e188ab35a7 115-122,136,147,193,198,200,203-209,211-226,230,291
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.42",
+  "base_commit_sha": "4dc404de9f36ef40a23661bbd7bf8233e399f662",
+  "prompts": {
+    "6320c7e188ab35a7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d8588cd8-b80b-4d4a-83be-b502073d6eae",
+        "model": "claude-opus-4-5-20251101"
+      },
+      "human_author": "Greggory Caines <gregg@caines.ca>",
+      "messages": [],
+      "total_additions": 47,
+      "total_deletions": 33,
+      "accepted_lines": 47,
+      "overriden_lines": 0
+    }
+  }
+}
