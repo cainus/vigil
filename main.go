@@ -214,7 +214,7 @@ func (m model) renderBody() string {
 			}
 			body.WriteString("Branch Files:\n")
 			for _, bf := range m.branchFiles {
-				label := fmt.Sprintf("%-25s", branchFileLabel(bf.Status))
+				label := fmt.Sprintf("%-12s", branchFileLabel(bf.Status))
 				styled := statusModified.Render(label)
 				if bf.Status == "A" {
 					styled = statusAdded.Render(label)
@@ -231,7 +231,7 @@ func (m model) renderBody() string {
 }
 
 func formatLabel(c FileChange) string {
-	padded := fmt.Sprintf("%-25s", c.Label)
+	padded := fmt.Sprintf("%-12s", c.Label)
 
 	if c.Staged == '?' {
 		return statusUntracked.Render(padded)
