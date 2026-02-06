@@ -120,6 +120,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.HalfViewUp()
 		case "pgdown":
 			m.viewport.HalfViewDown()
+		case "r":
+			m.branch = GetCurrentBranch()
+			m.changes = GetGitStatus()
+			m.branchFiles = GetBranchDiffFiles()
+			m.viewport.SetContent(m.renderBody())
+			return m, tea.ClearScreen
 		}
 
 	case tea.WindowSizeMsg:
@@ -145,7 +151,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.changes = GetGitStatus()
 		m.branchFiles = GetBranchDiffFiles()
 		m.viewport.SetContent(m.renderBody())
-		cmds = append(cmds, tick())
+		cmds = append(cmds, tick(), tea.ClearScreen)
 
 	case fetchTickMsg:
 		m.ahead = msg.ahead
@@ -154,8 +160,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, scheduleFetch())
 	}
 
-	m.viewport, cmd = m.viewport.Update(msg)
-	cmds = append(cmds, cmd)
+	if m.ready {
+		m.viewport, cmd = m.viewport.Update(msg)
+		cmds = append(cmds, cmd)
+	}
 
 	return m, tea.Batch(cmds...)
 }
@@ -190,7 +198,7 @@ func (m model) View() string {
 	header.WriteString("\n\n")
 
 	// Footer
-	footer := helpStyle.Render("\nScroll: ↑/↓/j/k  Press 'q' to quit")
+	footer := helpStyle.Render("\nScroll: ↑/↓/j/k  r: refresh  q: quit")
 
 	return header.String() + m.viewport.View() + footer
 }
