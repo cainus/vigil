@@ -83,7 +83,7 @@ func initialModel() model {
 }
 
 func tick() tea.Cmd {
-	return tea.Tick(1*time.Second, func(t time.Time) tea.Msg {
+	return tea.Tick(3*time.Second, func(t time.Time) tea.Msg {
 		return tickMsg{}
 	})
 }

@@ -54,7 +54,7 @@ func GetCurrentBranch() string {
 
 // GetGitStatus returns a list of changed files from git status
 func GetGitStatus() []FileChange {
-	cmd := exec.Command("git", "status", "--porcelain")
+	cmd := exec.Command("git", "status", "--porcelain", "-uall")
 	output, err := cmd.Output()
 	if err != nil {
 		return nil
