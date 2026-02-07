@@ -1,0 +1,25 @@
+git.go
+  2f8c88a59d897960 57
+main.go
+  2f8c88a59d897960 86
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.42",
+  "base_commit_sha": "026e052076268abe09653886224f6f2d7300c0e8",
+  "prompts": {
+    "2f8c88a59d897960": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b087c6f5-0230-4860-bd2d-b4fe1ce26ccc",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Greggory Caines <gregg@caines.ca>",
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 2,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    }
+  }
+}
