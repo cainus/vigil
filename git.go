@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -19,6 +21,33 @@ func IsGitRepo() bool {
 	cmd := exec.Command("git", "rev-parse", "--is-inside-work-tree")
 	err := cmd.Run()
 	return err == nil
+}
+
+// GetRepoName returns the name of the git repository (basename of the top-level directory)
+func GetRepoName() string {
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return filepath.Base(strings.TrimSpace(string(output)))
+}
+
+// ListFiles returns the files and directories in the given directory
+func ListFiles(dir string) []string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var files []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() {
+			name += "/"
+		}
+		files = append(files, name)
+	}
+	return files
 }
 
 // GetCurrentBranch returns the current git branch name

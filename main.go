@@ -62,9 +62,12 @@ type fetchTickMsg struct {
 // Model
 type model struct {
 	dir         string
+	repoName    string
+	isGitRepo   bool
 	branch      string
 	changes     []FileChange
 	branchFiles []BranchFile
+	files       []string // filesystem files when not in a git repo
 	ahead       int
 	behind      int
 	upstreamErr error
@@ -74,12 +77,51 @@ type model struct {
 	height   int
 }
 
-func initialModel() model {
+func initialModel(isGitRepo bool, dir string) model {
+	if !isGitRepo {
+		return model{
+			isGitRepo: false,
+			dir:       dir,
+			files:     ListFiles(dir),
+		}
+	}
 	return model{
-		branch:      GetCurrentBranch(),
-		changes:     GetGitStatus(),
+		isGitRepo: true,
+		dir:       dir,
+		repoName:  GetRepoName(),
+		branch:    GetCurrentBranch(),
+		changes:   GetGitStatus(),
 		branchFiles: GetBranchDiffFiles(),
 	}
+}
+
+// refresh re-reads filesystem / git state. Returns true if the directory
+// transitioned from non-git to git on this call.
+func (m *model) refresh() bool {
+	wasGit := m.isGitRepo
+	m.isGitRepo = IsGitRepo()
+	if m.isGitRepo {
+		if !wasGit {
+			cachedDefaultBranch = ""
+			m.repoName = GetRepoName()
+			m.files = nil
+		}
+		m.branch = GetCurrentBranch()
+		m.changes = GetGitStatus()
+		m.branchFiles = GetBranchDiffFiles()
+	} else {
+		if wasGit {
+			m.repoName = ""
+			m.branch = ""
+			m.changes = nil
+			m.branchFiles = nil
+			m.ahead = 0
+			m.behind = 0
+			m.upstreamErr = nil
+		}
+		m.files = ListFiles(m.dir)
+	}
+	return !wasGit && m.isGitRepo
 }
 
 func tick() tea.Cmd {
@@ -100,6 +142,9 @@ func scheduleFetch() tea.Cmd {
 }
 
 func (m model) Init() tea.Cmd {
+	if !m.isGitRepo {
+		return tea.Batch(tick(), tea.EnterAltScreen)
+	}
 	return tea.Batch(tick(), tea.EnterAltScreen, fetchUpstream)
 }
 
@@ -121,9 +166,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "pgdown":
 			m.viewport.HalfViewDown()
 		case "r":
-			m.branch = GetCurrentBranch()
-			m.changes = GetGitStatus()
-			m.branchFiles = GetBranchDiffFiles()
+			m.refresh()
 			m.viewport.SetContent(m.renderBody())
 			return m, tea.ClearScreen
 		}
@@ -147,11 +190,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tickMsg:
-		m.branch = GetCurrentBranch()
-		m.changes = GetGitStatus()
-		m.branchFiles = GetBranchDiffFiles()
+		becameGit := m.refresh()
 		m.viewport.SetContent(m.renderBody())
 		cmds = append(cmds, tick(), tea.ClearScreen)
+		if becameGit {
+			cmds = append(cmds, fetchUpstream)
+		}
 
 	case fetchTickMsg:
 		m.ahead = msg.ahead
@@ -177,23 +221,30 @@ func (m model) View() string {
 	var header strings.Builder
 	header.WriteString(asciiStyle.Render(asciiArt))
 	header.WriteString("\n")
-	header.WriteString(pathStyle.Render(m.dir))
-	header.WriteString("\n\n")
-	header.WriteString("Branch: ")
-	header.WriteString(branchStyle.Render(m.branch))
-	if m.upstreamErr != nil {
-		header.WriteString(helpStyle.Render(" (no upstream)"))
-	} else if m.ahead == 0 && m.behind == 0 {
-		header.WriteString(helpStyle.Render(" (up to date)"))
+	if m.isGitRepo {
+		header.WriteString(branchStyle.Render(m.repoName))
+		header.WriteString(pathStyle.Render(" " + m.dir))
+		header.WriteString("\n\n")
+		header.WriteString("Branch: ")
+		header.WriteString(branchStyle.Render(m.branch))
+		if m.upstreamErr != nil {
+			header.WriteString(helpStyle.Render(" (no upstream)"))
+		} else if m.ahead == 0 && m.behind == 0 {
+			header.WriteString(helpStyle.Render(" (up to date)"))
+		} else {
+			var parts []string
+			if m.behind > 0 {
+				parts = append(parts, fmt.Sprintf("%d behind", m.behind))
+			}
+			if m.ahead > 0 {
+				parts = append(parts, fmt.Sprintf("%d ahead", m.ahead))
+			}
+			header.WriteString(helpStyle.Render(" (" + strings.Join(parts, ", ") + ")"))
+		}
 	} else {
-		var parts []string
-		if m.behind > 0 {
-			parts = append(parts, fmt.Sprintf("%d behind", m.behind))
-		}
-		if m.ahead > 0 {
-			parts = append(parts, fmt.Sprintf("%d ahead", m.ahead))
-		}
-		header.WriteString(helpStyle.Render(" (" + strings.Join(parts, ", ") + ")"))
+		header.WriteString(pathStyle.Render(m.dir))
+		header.WriteString("\n\n")
+		header.WriteString(helpStyle.Render("Not a git repository"))
 	}
 	header.WriteString("\n\n")
 
@@ -205,6 +256,21 @@ func (m model) View() string {
 
 func (m model) renderBody() string {
 	var body strings.Builder
+	if !m.isGitRepo {
+		if len(m.files) == 0 {
+			body.WriteString(helpStyle.Render("Empty directory"))
+		} else {
+			body.WriteString("Files:\n")
+			for _, f := range m.files {
+				if strings.HasSuffix(f, "/") {
+					body.WriteString(fmt.Sprintf("  %s\n", branchStyle.Render(f)))
+				} else {
+					body.WriteString(fmt.Sprintf("  %s\n", fileStyle.Render(f)))
+				}
+			}
+		}
+		return body.String()
+	}
 	if len(m.changes) == 0 && len(m.branchFiles) == 0 {
 		body.WriteString(helpStyle.Render("No changes detected"))
 	} else {
@@ -277,13 +343,6 @@ func branchFileLabel(status string) string {
 }
 
 func main() {
-	// Check if we're in a git repo
-	if !IsGitRepo() {
-		fmt.Println("Error: Not a git repository")
-		fmt.Println("Please run vigil from within a git repository.")
-		os.Exit(1)
-	}
-
 	// Get current directory
 	dir, err := os.Getwd()
 	if err != nil {
@@ -292,8 +351,7 @@ func main() {
 	}
 
 	// Create model
-	m := initialModel()
-	m.dir = dir
+	m := initialModel(IsGitRepo(), dir)
 
 	// Run the program
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
