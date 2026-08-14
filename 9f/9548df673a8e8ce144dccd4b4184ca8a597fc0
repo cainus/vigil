@@ -1,0 +1,29 @@
+main_test.go
+  s_ad65864739fa29::t_cfc162269a960b 140-141,193,195-208,215-216
+  s_ad65864739fa29::t_18e303123cd694 4,131-139
+  s_ad65864739fa29::t_64263eb4cd3c94 143-183
+  s_ad65864739fa29::t_a99bdead47b221 194,209-214
+  s_ad65864739fa29::t_7d7d7b75c66b8c 142
+git.go
+  s_ad65864739fa29::t_9c000b131a667d 86-92,96,117
+main.go
+  s_ad65864739fa29::t_99fcfdcd72b49d 70,89,113,121,278-285
+  s_ad65864739fa29::t_92aa271fd3d7b3 75-78,91-96
+  s_ad65864739fa29::t_5114d51f891c2f 286
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "9f9548df673a8e8ce144dccd4b4184ca8a597fc0",
+  "prompts": {},
+  "sessions": {
+    "s_ad65864739fa29": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a00136-3b33-73c3-8269-fba39235b36a",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Greggory Caines <gregg@caines.ca>"
+    }
+  }
+}
