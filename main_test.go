@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -127,6 +128,59 @@ func TestRefreshDetectsTransitionIntoGitRepo(t *testing.T) {
 	}
 }
 
+func TestRenderBodyShowsGitStatusReadFailure(t *testing.T) {
+	m := model{
+		isGitRepo: true,
+		statusErr: errors.New("git status failed"),
+	}
+
+	body := m.renderBody()
+	if !strings.Contains(body, "Unable to read git status") || !strings.Contains(body, "git status failed") {
+		t.Fatalf("renderBody() = %q, want git status failure feedback", body)
+	}
+}
+
+func TestInitialModelCapturesGitStatusFailure(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	fakeBin := filepath.Join(dir, "bin")
+	if err := os.Mkdir(fakeBin, 0o755); err != nil {
+		t.Fatalf("mkdir fake bin: %v", err)
+	}
+	fakeGit := filepath.Join(fakeBin, "git")
+	script := `#!/bin/sh
+if [ "$1" = "status" ]; then
+  exit 128
+fi
+if [ "$1" = "branch" ]; then
+  printf 'main\n'
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
+  pwd
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "--verify" ]; then
+  exit 0
+fi
+exit 1
+`
+	if err := os.WriteFile(fakeGit, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake git: %v", err)
+	}
+
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	m := initialModel(true, dir)
+	if m.statusErr == nil {
+		t.Fatal("initialModel did not capture git status failure")
+	}
+	if body := m.renderBody(); !strings.Contains(body, "Unable to read git status") {
+		t.Fatalf("renderBody() = %q, want git status failure feedback", body)
+	}
+}
+
 func TestGetRepoName(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
@@ -134,5 +188,29 @@ func TestGetRepoName(t *testing.T) {
 
 	if got, want := GetRepoName(), filepath.Base(dir); got != want {
 		t.Fatalf("GetRepoName() = %q, want %q", got, want)
+	}
+}
+
+func TestGetGitStatusWithErrorDoesNotSilentlyLookCleanWhenGitStatusFails(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	fakeBin := filepath.Join(dir, "bin")
+	if err := os.Mkdir(fakeBin, 0o755); err != nil {
+		t.Fatalf("mkdir fake bin: %v", err)
+	}
+	fakeGit := filepath.Join(fakeBin, "git")
+	if err := os.WriteFile(fakeGit, []byte("#!/bin/sh\nexit 128\n"), 0o755); err != nil {
+		t.Fatalf("write fake git: %v", err)
+	}
+
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	changes, err := GetGitStatusWithError()
+	if err == nil {
+		t.Fatal("GetGitStatusWithError returned nil error when git status failed")
+	}
+	if changes != nil {
+		t.Fatalf("changes = %#v, want nil on git status failure", changes)
 	}
 }

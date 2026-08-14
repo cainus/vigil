@@ -67,14 +67,15 @@ type model struct {
 	branch      string
 	changes     []FileChange
 	branchFiles []BranchFile
+	statusErr   error
 	files       []string // filesystem files when not in a git repo
 	ahead       int
 	behind      int
 	upstreamErr error
-	viewport viewport.Model
-	ready    bool
-	width    int
-	height   int
+	viewport    viewport.Model
+	ready       bool
+	width       int
+	height      int
 }
 
 func initialModel(isGitRepo bool, dir string) model {
@@ -85,12 +86,14 @@ func initialModel(isGitRepo bool, dir string) model {
 			files:     ListFiles(dir),
 		}
 	}
+	changes, statusErr := GetGitStatusWithError()
 	return model{
-		isGitRepo: true,
-		dir:       dir,
-		repoName:  GetRepoName(),
-		branch:    GetCurrentBranch(),
-		changes:   GetGitStatus(),
+		isGitRepo:   true,
+		dir:         dir,
+		repoName:    GetRepoName(),
+		branch:      GetCurrentBranch(),
+		changes:     changes,
+		statusErr:   statusErr,
 		branchFiles: GetBranchDiffFiles(),
 	}
 }
@@ -107,7 +110,7 @@ func (m *model) refresh() bool {
 			m.files = nil
 		}
 		m.branch = GetCurrentBranch()
-		m.changes = GetGitStatus()
+		m.changes, m.statusErr = GetGitStatusWithError()
 		m.branchFiles = GetBranchDiffFiles()
 	} else {
 		if wasGit {
@@ -115,6 +118,7 @@ func (m *model) refresh() bool {
 			m.branch = ""
 			m.changes = nil
 			m.branchFiles = nil
+			m.statusErr = nil
 			m.ahead = 0
 			m.behind = 0
 			m.upstreamErr = nil
@@ -270,6 +274,15 @@ func (m model) renderBody() string {
 			}
 		}
 		return body.String()
+	}
+	if m.statusErr != nil {
+		body.WriteString(statusDeleted.Render("Unable to read git status"))
+		body.WriteString(helpStyle.Render(": " + m.statusErr.Error()))
+		if len(m.branchFiles) > 0 {
+			body.WriteString("\n\n")
+		} else {
+			return body.String()
+		}
 	}
 	if len(m.changes) == 0 && len(m.branchFiles) == 0 {
 		body.WriteString(helpStyle.Render("No changes detected"))

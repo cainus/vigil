@@ -83,10 +83,17 @@ func GetCurrentBranch() string {
 
 // GetGitStatus returns a list of changed files from git status
 func GetGitStatus() []FileChange {
+	changes, _ := GetGitStatusWithError()
+	return changes
+}
+
+// GetGitStatusWithError returns changed files and preserves git status failures
+// so callers can avoid presenting a failed read as a clean tree.
+func GetGitStatusWithError() ([]FileChange, error) {
 	cmd := exec.Command("git", "status", "--porcelain", "-uall")
 	output, err := cmd.Output()
 	if err != nil {
-		return nil
+		return nil, err
 	}
 
 	var changes []FileChange
@@ -107,7 +114,7 @@ func GetGitStatus() []FileChange {
 			File:     file,
 		})
 	}
-	return changes
+	return changes, nil
 }
 
 // GetCommitsAheadBehind fetches from remote and returns how many commits
