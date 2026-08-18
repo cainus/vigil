@@ -8,6 +8,9 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func chdir(t *testing.T, dir string) {
@@ -35,6 +38,27 @@ func git(t *testing.T, dir string, args ...string) {
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, output)
 	}
+}
+
+func commandEmitsFetchTick(cmd tea.Cmd) bool {
+	if cmd == nil {
+		return false
+	}
+	return msgContainsFetchTick(cmd())
+}
+
+func msgContainsFetchTick(msg tea.Msg) bool {
+	switch msg := msg.(type) {
+	case fetchTickMsg:
+		return true
+	case tea.BatchMsg:
+		for _, cmd := range msg {
+			if commandEmitsFetchTick(cmd) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func TestListFilesLabelsDirectories(t *testing.T) {
@@ -125,6 +149,79 @@ func TestRefreshDetectsTransitionIntoGitRepo(t *testing.T) {
 	}
 	if m.branch == "" {
 		t.Fatal("branch was empty after entering git repo")
+	}
+}
+
+func TestManualRefreshMarksCachedUpstreamStatusStale(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	git(t, dir, "init")
+
+	m := model{
+		isGitRepo:     true,
+		dir:           dir,
+		repoName:      filepath.Base(dir),
+		branch:        "main",
+		behind:        2,
+		upstreamSeen:  true,
+		upstreamStale: false,
+		viewport:      viewport.New(80, 20),
+		ready:         true,
+	}
+
+	m.refreshAndMarkUpstreamStale()
+
+	if !m.upstreamStale {
+		t.Fatal("refresh did not mark cached upstream status stale")
+	}
+	if view := m.View(); !strings.Contains(view, "2 behind") || !strings.Contains(view, "stale upstream status") {
+		t.Fatalf("View() = %q, want stale upstream status feedback", view)
+	}
+}
+
+func TestManualRefreshSchedulesUpstreamRefresh(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	git(t, dir, "init")
+
+	m := model{
+		isGitRepo:    true,
+		dir:          dir,
+		repoName:     filepath.Base(dir),
+		branch:       "main",
+		behind:       2,
+		upstreamSeen: true,
+		viewport:     viewport.New(80, 20),
+		ready:        true,
+	}
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	if !commandEmitsFetchTick(cmd) {
+		t.Fatal("manual refresh did not schedule an upstream ahead/behind refresh")
+	}
+}
+
+func TestPeriodicTickDoesNotScheduleUpstreamRefreshForExistingGitRepo(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	git(t, dir, "init")
+
+	m := model{
+		isGitRepo:    true,
+		dir:          dir,
+		repoName:     filepath.Base(dir),
+		branch:       "main",
+		behind:       2,
+		upstreamSeen: true,
+		viewport:     viewport.New(80, 20),
+		ready:        true,
+	}
+
+	_, cmd := m.Update(tickMsg{})
+
+	if commandEmitsFetchTick(cmd) {
+		t.Fatal("periodic tick scheduled an upstream ahead/behind refresh for an existing git repo")
 	}
 }
 

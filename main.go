@@ -61,21 +61,23 @@ type fetchTickMsg struct {
 
 // Model
 type model struct {
-	dir         string
-	repoName    string
-	isGitRepo   bool
-	branch      string
-	changes     []FileChange
-	branchFiles []BranchFile
-	statusErr   error
-	files       []string // filesystem files when not in a git repo
-	ahead       int
-	behind      int
-	upstreamErr error
-	viewport    viewport.Model
-	ready       bool
-	width       int
-	height      int
+	dir           string
+	repoName      string
+	isGitRepo     bool
+	branch        string
+	changes       []FileChange
+	branchFiles   []BranchFile
+	statusErr     error
+	files         []string // filesystem files when not in a git repo
+	ahead         int
+	behind        int
+	upstreamErr   error
+	upstreamSeen  bool
+	upstreamStale bool
+	viewport      viewport.Model
+	ready         bool
+	width         int
+	height        int
 }
 
 func initialModel(isGitRepo bool, dir string) model {
@@ -122,10 +124,20 @@ func (m *model) refresh() bool {
 			m.ahead = 0
 			m.behind = 0
 			m.upstreamErr = nil
+			m.upstreamSeen = false
+			m.upstreamStale = false
 		}
 		m.files = ListFiles(m.dir)
 	}
 	return !wasGit && m.isGitRepo
+}
+
+func (m *model) refreshAndMarkUpstreamStale() bool {
+	becameGit := m.refresh()
+	if m.isGitRepo && m.upstreamSeen {
+		m.upstreamStale = true
+	}
+	return becameGit
 }
 
 func tick() tea.Cmd {
@@ -170,8 +182,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "pgdown":
 			m.viewport.HalfViewDown()
 		case "r":
-			m.refresh()
+			m.refreshAndMarkUpstreamStale()
 			m.viewport.SetContent(m.renderBody())
+			if m.isGitRepo {
+				return m, tea.Batch(tea.ClearScreen, fetchUpstream)
+			}
 			return m, tea.ClearScreen
 		}
 
@@ -205,6 +220,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ahead = msg.ahead
 		m.behind = msg.behind
 		m.upstreamErr = msg.err
+		m.upstreamSeen = true
+		m.upstreamStale = false
 		cmds = append(cmds, scheduleFetch())
 	}
 
@@ -233,8 +250,14 @@ func (m model) View() string {
 		header.WriteString(branchStyle.Render(m.branch))
 		if m.upstreamErr != nil {
 			header.WriteString(helpStyle.Render(" (no upstream)"))
+		} else if !m.upstreamSeen {
+			header.WriteString(helpStyle.Render(" (checking upstream)"))
 		} else if m.ahead == 0 && m.behind == 0 {
-			header.WriteString(helpStyle.Render(" (up to date)"))
+			status := "up to date"
+			if m.upstreamStale {
+				status += ", stale upstream status"
+			}
+			header.WriteString(helpStyle.Render(" (" + status + ")"))
 		} else {
 			var parts []string
 			if m.behind > 0 {
@@ -242,6 +265,9 @@ func (m model) View() string {
 			}
 			if m.ahead > 0 {
 				parts = append(parts, fmt.Sprintf("%d ahead", m.ahead))
+			}
+			if m.upstreamStale {
+				parts = append(parts, "stale upstream status")
 			}
 			header.WriteString(helpStyle.Render(" (" + strings.Join(parts, ", ") + ")"))
 		}
