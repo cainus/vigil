@@ -81,6 +81,15 @@ func GetCurrentBranch() string {
 	return "unknown"
 }
 
+func GetHeadRevision() string {
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(output))
+}
+
 // GetGitStatus returns a list of changed files from git status
 func GetGitStatus() []FileChange {
 	changes, _ := GetGitStatusWithError()

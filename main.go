@@ -69,6 +69,7 @@ type model struct {
 	branchFiles   []BranchFile
 	statusErr     error
 	files         []string // filesystem files when not in a git repo
+	headRevision  string
 	ahead         int
 	behind        int
 	upstreamErr   error
@@ -90,13 +91,14 @@ func initialModel(isGitRepo bool, dir string) model {
 	}
 	changes, statusErr := GetGitStatusWithError()
 	return model{
-		isGitRepo:   true,
-		dir:         dir,
-		repoName:    GetRepoName(),
-		branch:      GetCurrentBranch(),
-		changes:     changes,
-		statusErr:   statusErr,
-		branchFiles: GetBranchDiffFiles(),
+		isGitRepo:    true,
+		dir:          dir,
+		repoName:     GetRepoName(),
+		branch:       GetCurrentBranch(),
+		headRevision: GetHeadRevision(),
+		changes:      changes,
+		statusErr:    statusErr,
+		branchFiles:  GetBranchDiffFiles(),
 	}
 }
 
@@ -111,13 +113,19 @@ func (m *model) refresh() bool {
 			m.repoName = GetRepoName()
 			m.files = nil
 		}
+		previousHead := m.headRevision
 		m.branch = GetCurrentBranch()
+		m.headRevision = GetHeadRevision()
 		m.changes, m.statusErr = GetGitStatusWithError()
 		m.branchFiles = GetBranchDiffFiles()
+		if previousHead != "" && m.headRevision != "" && previousHead != m.headRevision && m.upstreamSeen {
+			m.upstreamStale = true
+		}
 	} else {
 		if wasGit {
 			m.repoName = ""
 			m.branch = ""
+			m.headRevision = ""
 			m.changes = nil
 			m.branchFiles = nil
 			m.statusErr = nil
@@ -209,10 +217,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tickMsg:
+		wasUpstreamStale := m.upstreamStale
 		becameGit := m.refresh()
 		m.viewport.SetContent(m.renderBody())
 		cmds = append(cmds, tick(), tea.ClearScreen)
-		if becameGit {
+		if becameGit || (!wasUpstreamStale && m.upstreamStale) {
 			cmds = append(cmds, fetchUpstream)
 		}
 

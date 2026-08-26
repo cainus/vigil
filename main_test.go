@@ -40,6 +40,28 @@ func git(t *testing.T, dir string, args ...string) {
 	}
 }
 
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %q: %v", path, err)
+	}
+}
+
+func commitAll(t *testing.T, dir, message string) {
+	t.Helper()
+
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-m", message)
+}
+
+func setGitIdentity(t *testing.T, dir string) {
+	t.Helper()
+
+	git(t, dir, "config", "user.email", "test@example.com")
+	git(t, dir, "config", "user.name", "Vigil Test")
+}
+
 func commandEmitsFetchTick(cmd tea.Cmd) bool {
 	if cmd == nil {
 		return false
@@ -222,6 +244,78 @@ func TestPeriodicTickDoesNotScheduleUpstreamRefreshForExistingGitRepo(t *testing
 
 	if commandEmitsFetchTick(cmd) {
 		t.Fatal("periodic tick scheduled an upstream ahead/behind refresh for an existing git repo")
+	}
+}
+
+func TestPeriodicTickMarksUpstreamStatusStaleWhenHeadMoves(t *testing.T) {
+	root := t.TempDir()
+	remote := filepath.Join(root, "origin.git")
+	seed := filepath.Join(root, "seed")
+	work := filepath.Join(root, "work")
+
+	git(t, root, "init", "--bare", remote)
+	git(t, root, "init", seed)
+	setGitIdentity(t, seed)
+	writeFile(t, filepath.Join(seed, "file.txt"), "first\n")
+	commitAll(t, seed, "first")
+	git(t, seed, "branch", "-M", "main")
+	git(t, seed, "remote", "add", "origin", remote)
+	git(t, seed, "push", "-u", "origin", "main")
+
+	git(t, root, "clone", remote, work)
+	chdir(t, work)
+	git(t, work, "checkout", "main")
+
+	writeFile(t, filepath.Join(seed, "file.txt"), "second\n")
+	commitAll(t, seed, "second")
+	git(t, seed, "push")
+
+	m := initialModel(true, work)
+	m.behind = 1
+	m.upstreamSeen = true
+	m.viewport = viewport.New(80, 20)
+	m.ready = true
+
+	git(t, work, "pull", "--ff-only")
+
+	next, _ := m.Update(tickMsg{})
+	got := next.(model)
+
+	if !got.upstreamStale {
+		t.Fatal("periodic tick did not mark upstream status stale after HEAD moved")
+	}
+	if view := got.View(); !strings.Contains(view, "1 behind") {
+		t.Fatalf("View() = %q, want cached behind count still visible for stale-state diagnosis", view)
+	}
+	if view := got.View(); !strings.Contains(view, "stale upstream status") {
+		t.Fatalf("View() = %q, want stale upstream status feedback", view)
+	}
+}
+
+func TestPeriodicTickSchedulesUpstreamRefreshWhenHeadMoves(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	git(t, dir, "init")
+	setGitIdentity(t, dir)
+	writeFile(t, filepath.Join(dir, "file.txt"), "content\n")
+	commitAll(t, dir, "initial")
+
+	m := model{
+		isGitRepo:    true,
+		dir:          dir,
+		repoName:     filepath.Base(dir),
+		branch:       "main",
+		headRevision: "old",
+		behind:       3,
+		upstreamSeen: true,
+		viewport:     viewport.New(80, 20),
+		ready:        true,
+	}
+
+	_, cmd := m.Update(tickMsg{})
+
+	if !commandEmitsFetchTick(cmd) {
+		t.Fatal("periodic tick did not schedule an upstream refresh after HEAD moved")
 	}
 }
 
