@@ -6,10 +6,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
+
+const headerHeight = 8 // ASCII art + path + branch + spacing
+const toastDuration = 1500 * time.Millisecond
 
 const asciiArt = `
  █░█ █ █▀▀ █ █░░
@@ -58,6 +62,7 @@ type fetchTickMsg struct {
 	behind int
 	err    error
 }
+type toastClearMsg struct{ gen int }
 
 // Model
 type model struct {
@@ -79,6 +84,15 @@ type model struct {
 	ready         bool
 	width         int
 	height        int
+
+	bodyRows []bodyRow // structured body content, used for rendering and mouse selection
+
+	mouseDown                bool // left button held: a drag selection is in progress
+	selStartRow, selStartCol int
+	selEndRow, selEndCol     int
+
+	toastMsg string
+	toastGen int
 }
 
 func initialModel(isGitRepo bool, dir string) model {
@@ -148,6 +162,60 @@ func (m *model) refreshAndMarkUpstreamStale() bool {
 	return becameGit
 }
 
+// handleMouse processes a mouse event, tracking a left-button drag as a
+// text selection and copying it to the clipboard on release.
+func (m *model) handleMouse(msg tea.MouseMsg, cmds *[]tea.Cmd) {
+	switch msg.Action {
+	case tea.MouseActionPress:
+		if msg.Button != tea.MouseButtonLeft {
+			return
+		}
+		row, col := m.screenToContent(msg.X, msg.Y)
+		m.mouseDown = true
+		m.selStartRow, m.selStartCol = row, col
+		m.selEndRow, m.selEndCol = row, col
+		m.setBody()
+
+	case tea.MouseActionMotion:
+		if !m.mouseDown {
+			return
+		}
+		row, col := m.screenToContent(msg.X, msg.Y)
+		m.selEndRow, m.selEndCol = row, col
+		m.setBody()
+
+	case tea.MouseActionRelease:
+		if !m.mouseDown {
+			return
+		}
+		m.mouseDown = false
+		sel := normalizeSelection(m.selStartRow, m.selStartCol, m.selEndRow, m.selEndCol)
+		text := selectedText(m.bodyRows, sel)
+		if text != "" && clipboard.WriteAll(text) == nil {
+			m.toastGen++
+			gen := m.toastGen
+			m.toastMsg = "Copied to clipboard"
+			*cmds = append(*cmds, tea.Tick(toastDuration, func(time.Time) tea.Msg {
+				return toastClearMsg{gen: gen}
+			}))
+		}
+		m.setBody()
+	}
+}
+
+// screenToContent maps a terminal cell coordinate to a row/column in
+// m.bodyRows, clamping to the nearest valid row so drags that leave the
+// viewport still extend the selection sensibly.
+func (m model) screenToContent(x, y int) (row, col int) {
+	row = y - headerHeight + m.viewport.YOffset
+	row = clampInt(row, 0, len(m.bodyRows)-1)
+	if row < 0 {
+		row = 0
+	}
+	col = max(0, x)
+	return row, col
+}
+
 func tick() tea.Cmd {
 	return tea.Tick(3*time.Second, func(t time.Time) tea.Msg {
 		return tickMsg{}
@@ -191,7 +259,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.HalfViewDown()
 		case "r":
 			m.refreshAndMarkUpstreamStale()
-			m.viewport.SetContent(m.renderBody())
+			m.setBody()
 			if m.isGitRepo {
 				return m, tea.Batch(tea.ClearScreen, fetchUpstream)
 			}
@@ -202,24 +270,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
-		headerHeight := 8 // ASCII art + path + branch + spacing
 		footerHeight := 2 // Help text
 		verticalMargin := headerHeight + footerHeight
 
 		if !m.ready {
 			m.viewport = viewport.New(msg.Width, msg.Height-verticalMargin)
-			m.viewport.SetContent(m.renderBody())
+			m.setBody()
 			m.ready = true
 		} else {
 			m.viewport.Width = msg.Width
 			m.viewport.Height = msg.Height - verticalMargin
-			m.viewport.SetContent(m.renderBody())
+			m.setBody()
 		}
 
 	case tickMsg:
 		wasUpstreamStale := m.upstreamStale
 		becameGit := m.refresh()
-		m.viewport.SetContent(m.renderBody())
+		m.setBody()
 		cmds = append(cmds, tick(), tea.ClearScreen)
 		if becameGit || (!wasUpstreamStale && m.upstreamStale) {
 			cmds = append(cmds, fetchUpstream)
@@ -232,6 +299,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.upstreamSeen = true
 		m.upstreamStale = false
 		cmds = append(cmds, scheduleFetch())
+
+	case tea.MouseMsg:
+		m.handleMouse(msg, &cmds)
+
+	case toastClearMsg:
+		if msg.gen == m.toastGen {
+			m.toastMsg = ""
+		}
 	}
 
 	if m.ready {
@@ -288,105 +363,127 @@ func (m model) View() string {
 	header.WriteString("\n\n")
 
 	// Footer
-	footer := helpStyle.Render("\nScroll: ↑/↓/j/k  r: refresh  q: quit")
+	footerText := "Scroll: ↑/↓/j/k  r: refresh  q: quit"
+	if m.toastMsg != "" {
+		footerText = m.toastMsg
+	}
+	footer := helpStyle.Render("\n" + footerText)
 
 	return header.String() + m.viewport.View() + footer
 }
 
+// setBody rebuilds m.bodyRows from current state and pushes the rendered
+// result into the viewport, preserving any active mouse selection highlight.
+func (m *model) setBody() {
+	m.bodyRows = m.buildBodyRows()
+	var sel *selection
+	if m.mouseDown {
+		s := normalizeSelection(m.selStartRow, m.selStartCol, m.selEndRow, m.selEndCol)
+		sel = &s
+	}
+	m.viewport.SetContent(renderRows(m.bodyRows, sel))
+}
+
+// renderBody returns the unhighlighted body as plain rendered text, mainly
+// for tests; the live view renders via setBody so it can show a selection.
 func (m model) renderBody() string {
-	var body strings.Builder
+	return renderRows(m.buildBodyRows(), nil)
+}
+
+func (m model) buildBodyRows() []bodyRow {
+	var rows []bodyRow
 	if !m.isGitRepo {
 		if len(m.files) == 0 {
-			body.WriteString(helpStyle.Render("Empty directory"))
+			rows = append(rows, newRow(styledSeg("Empty directory", helpStyle)))
 		} else {
-			body.WriteString("Files:\n")
+			rows = append(rows, newRow(plainSeg("Files:")))
 			for _, f := range m.files {
+				style := fileStyle
 				if strings.HasSuffix(f, "/") {
-					body.WriteString(fmt.Sprintf("  %s\n", branchStyle.Render(f)))
-				} else {
-					body.WriteString(fmt.Sprintf("  %s\n", fileStyle.Render(f)))
+					style = branchStyle
 				}
+				rows = append(rows, newRow(plainSeg("  "), styledSeg(f, style)))
 			}
 		}
-		return body.String()
+		return rows
 	}
 	if m.statusErr != nil {
-		body.WriteString(statusDeleted.Render("Unable to read git status"))
-		body.WriteString(helpStyle.Render(": " + m.statusErr.Error()))
-		if len(m.branchFiles) > 0 {
-			body.WriteString("\n\n")
-		} else {
-			return body.String()
+		rows = append(rows, newRow(
+			styledSeg("Unable to read git status", statusDeleted),
+			styledSeg(": "+m.statusErr.Error(), helpStyle),
+		))
+		if len(m.branchFiles) == 0 {
+			return rows
 		}
+		rows = append(rows, newRow())
 	}
 	if len(m.changes) == 0 && len(m.branchFiles) == 0 {
-		body.WriteString(helpStyle.Render("No changes detected"))
-	} else {
-		if len(m.changes) > 0 {
-			body.WriteString("Changed Files:\n")
-			for _, change := range m.changes {
-				label := formatLabel(change)
-				file := fileStyle.Render(change.File)
-				body.WriteString(fmt.Sprintf("  %s  %s\n", label, file))
-			}
-		}
-		if len(m.branchFiles) > 0 {
-			if len(m.changes) > 0 {
-				body.WriteString("\n")
-			}
-			body.WriteString("Branch Files:\n")
-			for _, bf := range m.branchFiles {
-				label := fmt.Sprintf("%-12s", branchFileLabel(bf.Status))
-				styled := statusModified.Render(label)
-				if bf.Status == "A" {
-					styled = statusAdded.Render(label)
-				} else if bf.Status == "D" {
-					styled = statusDeleted.Render(label)
-				} else if strings.HasPrefix(bf.Status, "R") {
-					styled = statusRenamed.Render(label)
-				}
-				body.WriteString(fmt.Sprintf("  %s  %s\n", styled, fileStyle.Render(bf.File)))
-			}
+		rows = append(rows, newRow(styledSeg("No changes detected", helpStyle)))
+		return rows
+	}
+	if len(m.changes) > 0 {
+		rows = append(rows, newRow(plainSeg("Changed Files:")))
+		for _, change := range m.changes {
+			text, style := formatLabel(change)
+			rows = append(rows, newRow(
+				plainSeg("  "),
+				styledSeg(fmt.Sprintf("%-12s", text), style),
+				plainSeg("  "),
+				styledSeg(change.File, fileStyle),
+			))
 		}
 	}
-	return body.String()
+	if len(m.branchFiles) > 0 {
+		if len(m.changes) > 0 {
+			rows = append(rows, newRow())
+		}
+		rows = append(rows, newRow(plainSeg("Branch Files:")))
+		for _, bf := range m.branchFiles {
+			text, style := branchFileLabel(bf.Status)
+			rows = append(rows, newRow(
+				plainSeg("  "),
+				styledSeg(fmt.Sprintf("%-12s", text), style),
+				plainSeg("  "),
+				styledSeg(bf.File, fileStyle),
+			))
+		}
+	}
+	return rows
 }
 
-func formatLabel(c FileChange) string {
-	padded := fmt.Sprintf("%-12s", c.Label)
-
+func formatLabel(c FileChange) (string, lipgloss.Style) {
 	if c.Staged == '?' {
-		return statusUntracked.Render(padded)
+		return c.Label, statusUntracked
 	}
 	if c.Staged == 'D' || c.Unstaged == 'D' {
-		return statusDeleted.Render(padded)
+		return c.Label, statusDeleted
 	}
 	if c.Staged == 'A' {
-		return statusAdded.Render(padded)
+		return c.Label, statusAdded
 	}
 	if c.Staged == 'R' {
-		return statusRenamed.Render(padded)
+		return c.Label, statusRenamed
 	}
 	if c.Staged != ' ' && c.Staged != 0 {
-		return statusAdded.Render(padded) // staged changes in green
+		return c.Label, statusAdded // staged changes in green
 	}
-	return statusModified.Render(padded)
+	return c.Label, statusModified
 }
 
-func branchFileLabel(status string) string {
+func branchFileLabel(status string) (string, lipgloss.Style) {
 	switch {
 	case status == "A":
-		return "added"
+		return "added", statusAdded
 	case status == "D":
-		return "deleted"
+		return "deleted", statusDeleted
 	case status == "M":
-		return "modified"
+		return "modified", statusModified
 	case strings.HasPrefix(status, "R"):
-		return "renamed"
+		return "renamed", statusRenamed
 	case strings.HasPrefix(status, "C"):
-		return "copied"
+		return "copied", statusModified
 	default:
-		return "changed"
+		return "changed", statusModified
 	}
 }
 
