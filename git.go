@@ -183,12 +183,19 @@ type BranchFile struct {
 func GetBranchDiffFiles() []BranchFile {
 	defaultBranch := GetDefaultBranch()
 
+	// Prefer the remote-tracking ref so the diff matches what a PR on the
+	// remote would show, even if the local branch hasn't been pulled recently.
+	baseRef := defaultBranch
+	if out, err := exec.Command("git", "rev-parse", "--verify", "origin/"+defaultBranch).Output(); err == nil && strings.TrimSpace(string(out)) != "" {
+		baseRef = "origin/" + defaultBranch
+	}
+
 	// Check if HEAD is the same ref as the default branch (handles detached HEAD too)
 	headRev, err := exec.Command("git", "rev-parse", "HEAD").Output()
 	if err != nil {
 		return nil
 	}
-	defaultRev, err := exec.Command("git", "rev-parse", defaultBranch).Output()
+	defaultRev, err := exec.Command("git", "rev-parse", baseRef).Output()
 	if err != nil {
 		return nil
 	}
@@ -196,7 +203,7 @@ func GetBranchDiffFiles() []BranchFile {
 		return nil
 	}
 
-	cmd := exec.Command("git", "merge-base", defaultBranch, "HEAD")
+	cmd := exec.Command("git", "merge-base", baseRef, "HEAD")
 	output, err := cmd.Output()
 	if err != nil {
 		return nil
