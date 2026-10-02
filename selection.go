@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"path"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -155,4 +157,148 @@ func selectedText(rows []bodyRow, sel selection) string {
 		lines = append(lines, string(plain[start:end]))
 	}
 	return strings.Join(lines, "\n")
+}
+
+// fileEntry is one changed/branch file, before it has been grouped into a
+// directory tree and wrapped to fit the viewport.
+type fileEntry struct {
+	label string
+	style lipgloss.Style
+	path  string
+}
+
+const (
+	flatIndent    = "  "
+	groupedIndent = "    "
+	labelWidth    = 12
+)
+
+// buildFileTreeRows groups entries that share a directory under one header
+// line, so a long shared prefix is shown once instead of on every row, and
+// wraps anything still too wide for width at a '/' boundary.
+func buildFileTreeRows(entries []fileEntry, width int) []bodyRow {
+	type group struct {
+		dir     string
+		entries []fileEntry
+	}
+	var groups []group
+	index := map[string]int{}
+	for _, e := range entries {
+		dir := path.Dir(e.path)
+		if i, ok := index[dir]; ok && dir != "." {
+			groups[i].entries = append(groups[i].entries, e)
+			continue
+		}
+		index[dir] = len(groups)
+		groups = append(groups, group{dir: dir, entries: []fileEntry{e}})
+	}
+
+	var rows []bodyRow
+	for _, g := range groups {
+		if g.dir == "." || len(g.entries) == 1 {
+			for _, e := range g.entries {
+				rows = append(rows, flatFileRows(e, width)...)
+			}
+			continue
+		}
+		rows = append(rows, dirHeaderRows(g.dir, width)...)
+		for _, e := range g.entries {
+			rows = append(rows, groupedFileRows(e, width)...)
+		}
+	}
+	return rows
+}
+
+// flatFileRows renders one entry at its full path, with no directory header.
+func flatFileRows(e fileEntry, width int) []bodyRow {
+	prefixLen := len(flatIndent) + labelWidth + 2
+	label := fmt.Sprintf("%-*s", labelWidth, e.label)
+	chunks := wrapPath(e.path, availableWidth(width, prefixLen))
+
+	rows := make([]bodyRow, len(chunks))
+	for i, chunk := range chunks {
+		if i == 0 {
+			rows[i] = newRow(plainSeg(flatIndent), styledSeg(label, e.style), plainSeg("  "), styledSeg(chunk, fileStyle))
+		} else {
+			rows[i] = newRow(plainSeg(strings.Repeat(" ", prefixLen)), styledSeg(chunk, fileStyle))
+		}
+	}
+	return rows
+}
+
+// groupedFileRows renders one entry by its basename, indented under an
+// already-emitted directory header.
+func groupedFileRows(e fileEntry, width int) []bodyRow {
+	prefixLen := len(groupedIndent) + labelWidth + 2
+	label := fmt.Sprintf("%-*s", labelWidth, e.label)
+	chunks := wrapPath(path.Base(e.path), availableWidth(width, prefixLen))
+
+	rows := make([]bodyRow, len(chunks))
+	for i, chunk := range chunks {
+		if i == 0 {
+			rows[i] = newRow(plainSeg(groupedIndent), styledSeg(label, e.style), plainSeg("  "), styledSeg(chunk, fileStyle))
+		} else {
+			rows[i] = newRow(plainSeg(strings.Repeat(" ", prefixLen)), styledSeg(chunk, fileStyle))
+		}
+	}
+	return rows
+}
+
+// dirHeaderRows renders a shared-directory header line.
+func dirHeaderRows(dir string, width int) []bodyRow {
+	chunks := wrapPath(dir+"/", availableWidth(width, len(flatIndent)))
+	rows := make([]bodyRow, len(chunks))
+	for i, chunk := range chunks {
+		rows[i] = newRow(plainSeg(flatIndent), styledSeg(chunk, dirStyle))
+	}
+	return rows
+}
+
+// wrapPlainRows wraps a single unlabeled path (used for the plain
+// filesystem listing outside a git repo).
+func wrapPlainRows(text string, style lipgloss.Style, width int) []bodyRow {
+	chunks := wrapPath(text, availableWidth(width, len(flatIndent)))
+	rows := make([]bodyRow, len(chunks))
+	for i, chunk := range chunks {
+		rows[i] = newRow(plainSeg(flatIndent), styledSeg(chunk, style))
+	}
+	return rows
+}
+
+func availableWidth(total, prefixLen int) int {
+	if total <= 0 {
+		// Width not yet known (e.g. before the first WindowSizeMsg): don't wrap.
+		return 1 << 30
+	}
+	return max(1, total-prefixLen)
+}
+
+// wrapPath splits s into lines no longer than width runes, preferring to
+// break right after a '/' so path segments stay intact. It only hard-breaks
+// mid-segment when a single segment is itself wider than width.
+func wrapPath(s string, width int) []string {
+	runes := []rune(s)
+	if width <= 0 || len(runes) <= width {
+		return []string{s}
+	}
+
+	var lines []string
+	for len(runes) > width {
+		cut := -1
+		for i := width; i > 0; i-- {
+			if runes[i-1] == '/' {
+				cut = i
+				break
+			}
+		}
+		if cut == -1 {
+			cut = width
+		}
+		lines = append(lines, string(runes[:cut]))
+		runes = runes[cut:]
+	}
+	if len(runes) > 0 {
+		lines = append(lines, string(runes))
+	}
+	return lines
 }

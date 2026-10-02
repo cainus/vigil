@@ -53,6 +53,10 @@ var (
 
 	helpStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("241"))
+
+	dirStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("109"))
 )
 
 // Messages
@@ -402,7 +406,7 @@ func (m model) buildBodyRows() []bodyRow {
 				if strings.HasSuffix(f, "/") {
 					style = branchStyle
 				}
-				rows = append(rows, newRow(plainSeg("  "), styledSeg(f, style)))
+				rows = append(rows, wrapPlainRows(f, style, m.viewport.Width)...)
 			}
 		}
 		return rows
@@ -423,30 +427,24 @@ func (m model) buildBodyRows() []bodyRow {
 	}
 	if len(m.changes) > 0 {
 		rows = append(rows, newRow(plainSeg("Changed Files:")))
+		var entries []fileEntry
 		for _, change := range m.changes {
 			text, style := formatLabel(change)
-			rows = append(rows, newRow(
-				plainSeg("  "),
-				styledSeg(fmt.Sprintf("%-12s", text), style),
-				plainSeg("  "),
-				styledSeg(change.File, fileStyle),
-			))
+			entries = append(entries, fileEntry{label: text, style: style, path: change.File})
 		}
+		rows = append(rows, buildFileTreeRows(entries, m.viewport.Width)...)
 	}
 	if len(m.branchFiles) > 0 {
 		if len(m.changes) > 0 {
 			rows = append(rows, newRow())
 		}
 		rows = append(rows, newRow(plainSeg("Branch Files:")))
+		var entries []fileEntry
 		for _, bf := range m.branchFiles {
 			text, style := branchFileLabel(bf.Status)
-			rows = append(rows, newRow(
-				plainSeg("  "),
-				styledSeg(fmt.Sprintf("%-12s", text), style),
-				plainSeg("  "),
-				styledSeg(bf.File, fileStyle),
-			))
+			entries = append(entries, fileEntry{label: text, style: style, path: bf.File})
 		}
+		rows = append(rows, buildFileTreeRows(entries, m.viewport.Width)...)
 	}
 	return rows
 }

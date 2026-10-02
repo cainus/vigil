@@ -114,6 +114,10 @@ func GetGitStatusWithError() ([]FileChange, error) {
 		staged := line[0]
 		unstaged := line[1]
 		file := line[3:]
+		// Renamed/copied entries are "old -> new"; show the current (new) path.
+		if idx := strings.Index(file, " -> "); idx != -1 {
+			file = file[idx+len(" -> "):]
+		}
 
 		label := statusLabel(staged, unstaged)
 		changes = append(changes, FileChange{
@@ -221,11 +225,13 @@ func GetBranchDiffFiles() []BranchFile {
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "\t", 2)
-		if len(parts) != 2 {
+		parts := strings.Split(line, "\t")
+		if len(parts) < 2 {
 			continue
 		}
-		files = append(files, BranchFile{Status: parts[0], File: parts[1]})
+		// Renamed/copied lines carry both the old and new path; show the
+		// current (new) path.
+		files = append(files, BranchFile{Status: parts[0], File: parts[len(parts)-1]})
 	}
 	return files
 }
