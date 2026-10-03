@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -14,6 +15,8 @@ type FileChange struct {
 	Unstaged byte // second column: unstaged status
 	Label    string
 	File     string
+	Added    int
+	Deleted  int
 }
 
 // IsGitRepo checks if the current directory is inside a git repository
@@ -127,7 +130,85 @@ func GetGitStatusWithError() ([]FileChange, error) {
 			File:     file,
 		})
 	}
+
+	stats := getWorkingTreeLineStats()
+	for i := range changes {
+		if s, ok := stats[changes[i].File]; ok {
+			changes[i].Added, changes[i].Deleted = s.added, s.deleted
+		}
+	}
 	return changes, nil
+}
+
+type lineStats struct{ added, deleted int }
+
+// getWorkingTreeLineStats returns added/deleted line counts for every file
+// with staged or unstaged changes, keyed by its current path. Untracked
+// files have no diff to count and are left out.
+func getWorkingTreeLineStats() map[string]lineStats {
+	stats := parseNumstat(runNumstat("git", "diff", "--numstat"))
+	for path, s := range parseNumstat(runNumstat("git", "diff", "--cached", "--numstat")) {
+		existing := stats[path]
+		existing.added += s.added
+		existing.deleted += s.deleted
+		stats[path] = existing
+	}
+	return stats
+}
+
+func runNumstat(name string, args ...string) []byte {
+	output, err := exec.Command(name, args...).Output()
+	if err != nil {
+		return nil
+	}
+	return output
+}
+
+// parseNumstat parses `git diff --numstat` output into per-path line stats,
+// resolving renamed paths (plain "old => new" and the common-prefix
+// "dir/{old => new}/suffix" form) to the current path. Binary files report
+// "-" for both counts and are skipped.
+func parseNumstat(output []byte) map[string]lineStats {
+	stats := map[string]lineStats{}
+	if len(output) == 0 {
+		return stats
+	}
+	for _, line := range strings.Split(strings.TrimRight(string(output), "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "\t", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		added, err1 := strconv.Atoi(parts[0])
+		deleted, err2 := strconv.Atoi(parts[1])
+		if err1 != nil || err2 != nil {
+			continue // binary file ("-\t-\tpath")
+		}
+		path := numstatPath(parts[2])
+		s := stats[path]
+		s.added += added
+		s.deleted += deleted
+		stats[path] = s
+	}
+	return stats
+}
+
+func numstatPath(field string) string {
+	if start := strings.Index(field, "{"); start != -1 {
+		if end := strings.Index(field[start:], "}"); end != -1 {
+			end += start
+			prefix, mid, suffix := field[:start], field[start+1:end], field[end+1:]
+			if arrow := strings.Index(mid, " => "); arrow != -1 {
+				return prefix + mid[arrow+len(" => "):] + suffix
+			}
+		}
+	}
+	if arrow := strings.Index(field, " => "); arrow != -1 {
+		return field[arrow+len(" => "):]
+	}
+	return field
 }
 
 // GetCommitsAheadBehind fetches from remote and returns how many commits
@@ -178,8 +259,10 @@ func GetDefaultBranch() string {
 
 // BranchFile represents a file changed in commits on this branch
 type BranchFile struct {
-	Status string
-	File   string
+	Status  string
+	File    string
+	Added   int
+	Deleted int
 }
 
 // GetBranchDiffFiles returns files changed in commits on this branch
@@ -232,6 +315,13 @@ func GetBranchDiffFiles() []BranchFile {
 		// Renamed/copied lines carry both the old and new path; show the
 		// current (new) path.
 		files = append(files, BranchFile{Status: parts[0], File: parts[len(parts)-1]})
+	}
+
+	stats := parseNumstat(runNumstat("git", "diff", "--numstat", mergeBase, "HEAD"))
+	for i := range files {
+		if s, ok := stats[files[i].File]; ok {
+			files[i].Added, files[i].Deleted = s.added, s.deleted
+		}
 	}
 	return files
 }

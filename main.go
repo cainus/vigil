@@ -34,19 +34,19 @@ var (
 			Foreground(lipgloss.Color("42"))
 
 	statusModified = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("214"))
+			Foreground(lipgloss.Color("136"))
 
 	statusAdded = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("42"))
+			Foreground(lipgloss.Color("65"))
 
 	statusDeleted = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("196"))
+			Foreground(lipgloss.Color("131"))
 
 	statusUntracked = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("245"))
 
 	statusRenamed = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("39"))
+			Foreground(lipgloss.Color("67"))
 
 	fileStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("252"))
@@ -430,7 +430,7 @@ func (m model) buildBodyRows() []bodyRow {
 		var entries []fileEntry
 		for _, change := range m.changes {
 			text, style := formatLabel(change)
-			entries = append(entries, fileEntry{label: text, style: style, path: change.File})
+			entries = append(entries, fileEntry{label: text, style: style, path: change.File, added: change.Added, deleted: change.Deleted})
 		}
 		rows = append(rows, buildFileTreeRows(entries, m.viewport.Width)...)
 	}
@@ -442,46 +442,59 @@ func (m model) buildBodyRows() []bodyRow {
 		var entries []fileEntry
 		for _, bf := range m.branchFiles {
 			text, style := branchFileLabel(bf.Status)
-			entries = append(entries, fileEntry{label: text, style: style, path: bf.File})
+			entries = append(entries, fileEntry{label: text, style: style, path: bf.File, added: bf.Added, deleted: bf.Deleted})
 		}
 		rows = append(rows, buildFileTreeRows(entries, m.viewport.Width)...)
 	}
 	return rows
 }
 
+// Status symbols. Each is exactly one rune wide so columns stay aligned.
+const (
+	symbolAdded     = "+"
+	symbolDeleted   = "-"
+	symbolModified  = "~"
+	symbolRenamed   = "→"
+	symbolCopied    = "⧉"
+	symbolUntracked = "?"
+)
+
 func formatLabel(c FileChange) (string, lipgloss.Style) {
 	if c.Staged == '?' {
-		return c.Label, statusUntracked
+		return symbolUntracked, statusUntracked
 	}
 	if c.Staged == 'D' || c.Unstaged == 'D' {
-		return c.Label, statusDeleted
+		return symbolDeleted, statusDeleted
 	}
 	if c.Staged == 'A' {
-		return c.Label, statusAdded
+		return symbolAdded, statusAdded
 	}
 	if c.Staged == 'R' {
-		return c.Label, statusRenamed
+		return symbolRenamed, statusRenamed
+	}
+	if c.Staged == 'C' {
+		return symbolCopied, statusModified
 	}
 	if c.Staged != ' ' && c.Staged != 0 {
-		return c.Label, statusAdded // staged changes in green
+		return symbolAdded, statusAdded // staged changes in green
 	}
-	return c.Label, statusModified
+	return symbolModified, statusModified
 }
 
 func branchFileLabel(status string) (string, lipgloss.Style) {
 	switch {
 	case status == "A":
-		return "added", statusAdded
+		return symbolAdded, statusAdded
 	case status == "D":
-		return "deleted", statusDeleted
+		return symbolDeleted, statusDeleted
 	case status == "M":
-		return "modified", statusModified
+		return symbolModified, statusModified
 	case strings.HasPrefix(status, "R"):
-		return "renamed", statusRenamed
+		return symbolRenamed, statusRenamed
 	case strings.HasPrefix(status, "C"):
-		return "copied", statusModified
+		return symbolCopied, statusModified
 	default:
-		return "changed", statusModified
+		return symbolModified, statusModified
 	}
 }
 

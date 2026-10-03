@@ -162,15 +162,40 @@ func selectedText(rows []bodyRow, sel selection) string {
 // fileEntry is one changed/branch file, before it has been grouped into a
 // directory tree and wrapped to fit the viewport.
 type fileEntry struct {
-	label string
-	style lipgloss.Style
-	path  string
+	label   string
+	style   lipgloss.Style
+	path    string
+	added   int
+	deleted int
+}
+
+// statsSuffix builds the " +N -M" segments for an entry's line-change
+// counts, or nil if there is nothing to show (e.g. untracked, or a rename
+// with no content change).
+func statsSuffix(e fileEntry) []rowSegment {
+	if e.added == 0 && e.deleted == 0 {
+		return nil
+	}
+	return []rowSegment{
+		plainSeg(" "),
+		styledSeg(fmt.Sprintf("+%d", e.added), statusAdded),
+		plainSeg(" "),
+		styledSeg(fmt.Sprintf("-%d", e.deleted), statusDeleted),
+	}
+}
+
+func segsWidth(segs []rowSegment) int {
+	n := 0
+	for _, s := range segs {
+		n += len([]rune(s.text))
+	}
+	return n
 }
 
 const (
 	flatIndent    = "  "
 	groupedIndent = "    "
-	labelWidth    = 12
+	symbolSep     = " " // space between the status symbol and the path
 )
 
 // buildFileTreeRows groups entries that share a directory under one header
@@ -211,36 +236,38 @@ func buildFileTreeRows(entries []fileEntry, width int) []bodyRow {
 
 // flatFileRows renders one entry at its full path, with no directory header.
 func flatFileRows(e fileEntry, width int) []bodyRow {
-	prefixLen := len(flatIndent) + labelWidth + 2
-	label := fmt.Sprintf("%-*s", labelWidth, e.label)
-	chunks := wrapPath(e.path, availableWidth(width, prefixLen))
+	prefixLen := len(flatIndent) + len([]rune(e.label)) + len(symbolSep)
+	suffix := statsSuffix(e)
+	chunks := wrapPath(e.path, availableWidth(width, prefixLen+segsWidth(suffix)))
 
 	rows := make([]bodyRow, len(chunks))
 	for i, chunk := range chunks {
 		if i == 0 {
-			rows[i] = newRow(plainSeg(flatIndent), styledSeg(label, e.style), plainSeg("  "), styledSeg(chunk, fileStyle))
+			rows[i] = newRow(plainSeg(flatIndent), styledSeg(e.label, e.style), plainSeg(symbolSep), styledSeg(chunk, fileStyle))
 		} else {
 			rows[i] = newRow(plainSeg(strings.Repeat(" ", prefixLen)), styledSeg(chunk, fileStyle))
 		}
 	}
+	rows[len(rows)-1].segments = append(rows[len(rows)-1].segments, suffix...)
 	return rows
 }
 
 // groupedFileRows renders one entry by its basename, indented under an
 // already-emitted directory header.
 func groupedFileRows(e fileEntry, width int) []bodyRow {
-	prefixLen := len(groupedIndent) + labelWidth + 2
-	label := fmt.Sprintf("%-*s", labelWidth, e.label)
-	chunks := wrapPath(path.Base(e.path), availableWidth(width, prefixLen))
+	prefixLen := len(groupedIndent) + len([]rune(e.label)) + len(symbolSep)
+	suffix := statsSuffix(e)
+	chunks := wrapPath(path.Base(e.path), availableWidth(width, prefixLen+segsWidth(suffix)))
 
 	rows := make([]bodyRow, len(chunks))
 	for i, chunk := range chunks {
 		if i == 0 {
-			rows[i] = newRow(plainSeg(groupedIndent), styledSeg(label, e.style), plainSeg("  "), styledSeg(chunk, fileStyle))
+			rows[i] = newRow(plainSeg(groupedIndent), styledSeg(e.label, e.style), plainSeg(symbolSep), styledSeg(chunk, fileStyle))
 		} else {
 			rows[i] = newRow(plainSeg(strings.Repeat(" ", prefixLen)), styledSeg(chunk, fileStyle))
 		}
 	}
+	rows[len(rows)-1].segments = append(rows[len(rows)-1].segments, suffix...)
 	return rows
 }
 

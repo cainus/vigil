@@ -2,6 +2,14 @@ package main
 
 import "testing"
 
+func TestStatusSymbolsAreSingleRune(t *testing.T) {
+	for _, sym := range []string{symbolAdded, symbolDeleted, symbolModified, symbolRenamed, symbolCopied, symbolUntracked} {
+		if n := len([]rune(sym)); n != 1 {
+			t.Fatalf("symbol %q is %d runes, want 1 (breaks column alignment)", sym, n)
+		}
+	}
+}
+
 func TestWrapPathBreaksAfterSlash(t *testing.T) {
 	got := wrapPath("backend/automation/src/automation_instrumentation.py", 24)
 	want := []string{"backend/automation/src/", "automation_instrumentati", "on.py"}
@@ -31,9 +39,9 @@ func TestWrapPathUnlimitedWhenWidthIsZero(t *testing.T) {
 
 func TestBuildFileTreeRowsGroupsSharedDirectory(t *testing.T) {
 	entries := []fileEntry{
-		{label: "modified", style: statusModified, path: "backend/automation/src/auto/a.go"},
-		{label: "added", style: statusAdded, path: "backend/automation/src/auto/b.go"},
-		{label: "modified", style: statusModified, path: "README.md"},
+		{label: symbolModified, style: statusModified, path: "backend/automation/src/auto/a.go"},
+		{label: symbolAdded, style: statusAdded, path: "backend/automation/src/auto/b.go"},
+		{label: symbolModified, style: statusModified, path: "README.md"},
 	}
 	rows := buildFileTreeRows(entries, 200)
 
@@ -47,13 +55,13 @@ func TestBuildFileTreeRowsGroupsSharedDirectory(t *testing.T) {
 	}
 	foundA, foundB, foundReadme := false, false, false
 	for _, line := range plain {
-		if line == "    modified      a.go" {
+		if line == "    ~ a.go" {
 			foundA = true
 		}
-		if line == "    added         b.go" {
+		if line == "    + b.go" {
 			foundB = true
 		}
-		if line == "  modified      README.md" {
+		if line == "  ~ README.md" {
 			foundReadme = true
 		}
 	}
@@ -67,13 +75,13 @@ func TestBuildFileTreeRowsGroupsSharedDirectory(t *testing.T) {
 
 func TestBuildFileTreeRowsSingleFileInDirStaysFlat(t *testing.T) {
 	entries := []fileEntry{
-		{label: "modified", style: statusModified, path: "docs/CHANGE_CONTROL_POLICY.md"},
+		{label: symbolModified, style: statusModified, path: "docs/CHANGE_CONTROL_POLICY.md"},
 	}
 	rows := buildFileTreeRows(entries, 200)
 	if len(rows) != 1 {
 		t.Fatalf("expected a single flat row for a lone file, got %d rows", len(rows))
 	}
-	if got := rows[0].plainText(); got != "  modified      docs/CHANGE_CONTROL_POLICY.md" {
+	if got := rows[0].plainText(); got != "  ~ docs/CHANGE_CONTROL_POLICY.md" {
 		t.Fatalf("got %q", got)
 	}
 }
