@@ -326,6 +326,54 @@ func GetBranchDiffFiles() []BranchFile {
 	return files
 }
 
+// Worktree is one entry from `git worktree list`.
+type Worktree struct {
+	Path     string
+	Branch   string // empty when Detached
+	Head     string // short commit hash
+	Detached bool
+}
+
+// GetWorktrees returns every worktree registered for the current repository.
+func GetWorktrees() []Worktree {
+	output, err := exec.Command("git", "worktree", "list", "--porcelain").Output()
+	if err != nil {
+		return nil
+	}
+
+	var worktrees []Worktree
+	var cur *Worktree
+	flush := func() {
+		if cur != nil {
+			worktrees = append(worktrees, *cur)
+			cur = nil
+		}
+	}
+	for _, line := range strings.Split(string(output), "\n") {
+		switch {
+		case line == "":
+			flush()
+		case strings.HasPrefix(line, "worktree "):
+			flush()
+			cur = &Worktree{Path: strings.TrimPrefix(line, "worktree ")}
+		case cur == nil:
+			// Line belongs to a block we're not tracking (e.g. "bare").
+		case strings.HasPrefix(line, "HEAD "):
+			head := strings.TrimPrefix(line, "HEAD ")
+			if len(head) > 8 {
+				head = head[:8]
+			}
+			cur.Head = head
+		case strings.HasPrefix(line, "branch "):
+			cur.Branch = strings.TrimPrefix(strings.TrimPrefix(line, "branch "), "refs/heads/")
+		case line == "detached":
+			cur.Detached = true
+		}
+	}
+	flush()
+	return worktrees
+}
+
 func statusLabel(staged, unstaged byte) string {
 	if staged == '?' && unstaged == '?' {
 		return "untracked"

@@ -97,6 +97,10 @@ type model struct {
 
 	toastMsg string
 	toastGen int
+
+	showWorktreePicker bool
+	worktrees          []Worktree
+	worktreeCursor     int
 }
 
 func initialModel(isGitRepo bool, dir string) model {
@@ -196,15 +200,21 @@ func (m *model) handleMouse(msg tea.MouseMsg, cmds *[]tea.Cmd) {
 		sel := normalizeSelection(m.selStartRow, m.selStartCol, m.selEndRow, m.selEndCol)
 		text := selectedText(m.bodyRows, sel)
 		if text != "" && clipboard.WriteAll(text) == nil {
-			m.toastGen++
-			gen := m.toastGen
-			m.toastMsg = "Copied to clipboard"
-			*cmds = append(*cmds, tea.Tick(toastDuration, func(time.Time) tea.Msg {
-				return toastClearMsg{gen: gen}
-			}))
+			*cmds = append(*cmds, m.showToast("Copied to clipboard"))
 		}
 		m.setBody()
 	}
+}
+
+// showToast sets the footer toast message and returns a tea.Cmd that clears
+// it after toastDuration, unless a newer toast has replaced it by then.
+func (m *model) showToast(msg string) tea.Cmd {
+	m.toastGen++
+	gen := m.toastGen
+	m.toastMsg = msg
+	return tea.Tick(toastDuration, func(time.Time) tea.Msg {
+		return toastClearMsg{gen: gen}
+	})
 }
 
 // screenToContent maps a terminal cell coordinate to a row/column in
@@ -218,6 +228,76 @@ func (m model) screenToContent(x, y int) (row, col int) {
 	}
 	col = max(0, x)
 	return row, col
+}
+
+// openWorktreePicker loads this repo's worktrees and opens the picker, or
+// shows a toast if there's nothing to switch to.
+func (m *model) openWorktreePicker() tea.Cmd {
+	if !m.isGitRepo {
+		return nil
+	}
+	worktrees := GetWorktrees()
+	if len(worktrees) <= 1 {
+		return m.showToast("No other worktrees")
+	}
+
+	m.worktrees = worktrees
+	m.worktreeCursor = 0
+	for i, wt := range worktrees {
+		if wt.Path == m.dir {
+			m.worktreeCursor = i
+			break
+		}
+	}
+	m.showWorktreePicker = true
+	m.setBody()
+	return nil
+}
+
+// handleWorktreePickerKey handles input while the worktree picker is open,
+// taking over from the normal key bindings.
+func (m model) handleWorktreePickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up", "k":
+		if m.worktreeCursor > 0 {
+			m.worktreeCursor--
+		}
+		m.setBody()
+	case "down", "j":
+		if m.worktreeCursor < len(m.worktrees)-1 {
+			m.worktreeCursor++
+		}
+		m.setBody()
+	case "enter":
+		wt := m.worktrees[m.worktreeCursor]
+		m.showWorktreePicker = false
+		if err := m.switchWorktree(wt); err != nil {
+			cmd := m.showToast("Switch failed: " + err.Error())
+			m.setBody()
+			return m, cmd
+		}
+		m.setBody()
+		return m, tea.Batch(tea.ClearScreen, fetchUpstream)
+	case "esc", "q", "w":
+		m.showWorktreePicker = false
+		m.setBody()
+	}
+	return m, nil
+}
+
+// switchWorktree changes the process's working directory to wt and reloads
+// all git state from there. Every git.go helper shells out relative to the
+// process cwd, so this one chdir is enough to make the rest of the app
+// operate on the new worktree.
+func (m *model) switchWorktree(wt Worktree) error {
+	if err := os.Chdir(wt.Path); err != nil {
+		return err
+	}
+	m.dir = wt.Path
+	m.repoName = GetRepoName()
+	cachedDefaultBranch = ""
+	m.refreshAndMarkUpstreamStale()
+	return nil
 }
 
 func tick() tea.Cmd {
@@ -250,6 +330,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if m.showWorktreePicker {
+			return m.handleWorktreePickerKey(msg)
+		}
 		switch msg.String() {
 		case "q", "ctrl+c", "esc":
 			return m, tea.Quit
@@ -268,6 +351,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Batch(tea.ClearScreen, fetchUpstream)
 			}
 			return m, tea.ClearScreen
+		case "w":
+			cmd := m.openWorktreePicker()
+			return m, cmd
 		}
 
 	case tea.WindowSizeMsg:
@@ -367,7 +453,10 @@ func (m model) View() string {
 	header.WriteString("\n\n")
 
 	// Footer
-	footerText := "Scroll: ↑/↓/j/k  r: refresh  q: quit"
+	footerText := "Scroll: ↑/↓/j/k  r: refresh  w: worktrees  q: quit"
+	if m.showWorktreePicker {
+		footerText = "↑/↓: select  enter: switch  esc: cancel"
+	}
 	if m.toastMsg != "" {
 		footerText = m.toastMsg
 	}
@@ -379,6 +468,11 @@ func (m model) View() string {
 // setBody rebuilds m.bodyRows from current state and pushes the rendered
 // result into the viewport, preserving any active mouse selection highlight.
 func (m *model) setBody() {
+	if m.showWorktreePicker {
+		m.bodyRows = m.buildWorktreePickerRows()
+		m.viewport.SetContent(renderRows(m.bodyRows, nil))
+		return
+	}
 	m.bodyRows = m.buildBodyRows()
 	var sel *selection
 	if m.mouseDown {
@@ -386,6 +480,35 @@ func (m *model) setBody() {
 		sel = &s
 	}
 	m.viewport.SetContent(renderRows(m.bodyRows, sel))
+}
+
+func (m model) buildWorktreePickerRows() []bodyRow {
+	rows := []bodyRow{newRow(plainSeg("Switch worktree:")), newRow()}
+	for i, wt := range m.worktrees {
+		marker, style := "  ", fileStyle
+		if i == m.worktreeCursor {
+			marker, style = "> ", branchStyle
+		}
+
+		branchLabel := wt.Branch
+		if wt.Detached {
+			branchLabel = "(detached @ " + wt.Head + ")"
+		}
+
+		note := ""
+		if wt.Path == m.dir {
+			note = "  (current)"
+		}
+
+		rows = append(rows, newRow(
+			plainSeg(marker),
+			styledSeg(fmt.Sprintf("%-24s", branchLabel), style),
+			plainSeg("  "),
+			styledSeg(wt.Path, fileStyle),
+			plainSeg(note),
+		))
+	}
+	return rows
 }
 
 // renderBody returns the unhighlighted body as plain rendered text, mainly
